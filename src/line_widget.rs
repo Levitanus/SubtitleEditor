@@ -24,6 +24,14 @@ pub enum LineWidgetAction {
         pane: PaneSide,
         index: usize,
     },
+    DeleteLine {
+        pane: PaneSide,
+        index: usize,
+    },
+    InsertLineAfter {
+        pane: PaneSide,
+        index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,6 +60,22 @@ pub fn line_action_from_shortcuts(
     let merge_pressed = shortcut_pressed(ctx, egui::Key::Backspace, true, false);
     if merge_pressed && focused.char_index == 0 && focused.index > 0 {
         return Some(LineWidgetAction::MergeWithPrevious {
+            pane: focused.pane,
+            index: focused.index,
+        });
+    }
+
+    let delete_pressed = shortcut_pressed(ctx, egui::Key::Delete, true, false);
+    if delete_pressed {
+        return Some(LineWidgetAction::DeleteLine {
+            pane: focused.pane,
+            index: focused.index,
+        });
+    }
+
+    let insert_pressed = shortcut_pressed(ctx, egui::Key::N, true, false);
+    if insert_pressed {
+        return Some(LineWidgetAction::InsertLineAfter {
             pane: focused.pane,
             index: focused.index,
         });
@@ -211,6 +235,12 @@ impl SubtitleEditorApp {
             LineWidgetAction::MergeWithPrevious { pane, index } => {
                 self.merge_with_previous(pane, index);
             }
+            LineWidgetAction::DeleteLine { pane, index } => {
+                self.delete_line_at(pane, index);
+            }
+            LineWidgetAction::InsertLineAfter { pane, index } => {
+                self.insert_line_after(pane, index);
+            }
         }
     }
 
@@ -236,6 +266,61 @@ impl SubtitleEditorApp {
 
         split_line_at_in(lines, index, char_index);
     }
+
+    fn delete_line_at(&mut self, pane: PaneSide, index: usize) {
+        let Some(lines) = self.lines_mut(pane) else {
+            return;
+        };
+
+        delete_line_at_in(lines, index);
+    }
+
+    fn insert_line_after(&mut self, pane: PaneSide, index: usize) {
+        let Some(lines) = self.lines_mut(pane) else {
+            return;
+        };
+
+        insert_line_after_in(lines, index);
+    }
+}
+
+fn delete_line_at_in(lines: &mut Vec<SubtitleLine>, index: usize) {
+    if index >= lines.len() {
+        return;
+    }
+
+    lines.remove(index);
+}
+
+fn insert_line_after_in(lines: &mut Vec<SubtitleLine>, index: usize) {
+    if index >= lines.len() {
+        return;
+    }
+
+    let timecode = build_inserted_timecode(lines, index);
+    lines.insert(
+        index + 1,
+        SubtitleLine {
+            text: String::new(),
+            timecode,
+        },
+    );
+}
+
+fn build_inserted_timecode(lines: &[SubtitleLine], index: usize) -> Option<TimecodeRange> {
+    let current = lines.get(index)?.timecode.as_ref()?;
+    let start = current.end;
+    let default_end = start.checked_add(Duration::from_secs(3)).unwrap_or(start);
+
+    let end = lines
+        .get(index + 1)
+        .and_then(|line| line.timecode.as_ref())
+        .map(|next| next.start)
+        .filter(|next_start| *next_start < default_end)
+        .map(|next_start| next_start.max(start))
+        .unwrap_or(default_end);
+
+    Some(TimecodeRange { start, end })
 }
 
 fn merge_with_previous_in(lines: &mut Vec<SubtitleLine>, index: usize) {

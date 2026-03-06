@@ -6,6 +6,22 @@ use eframe::egui;
 
 impl SubtitleEditorApp {
     pub(crate) fn handle_deepl_shortcuts(&mut self, ctx: &egui::Context) -> bool {
+        let translate_batch_pressed = ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::T,
+            ))
+        });
+        if translate_batch_pressed {
+            let batch_size = self.deepl_state.translation_batch_size as usize;
+            if let Err(error) = self.translate_n_lines_from_focus(batch_size) {
+                self.error = Some(error);
+            } else {
+                self.error = None;
+            }
+            return true;
+        }
+
         let translate_pressed = ctx.input_mut(|i| {
             i.consume_shortcut(&egui::KeyboardShortcut::new(
                 egui::Modifiers::COMMAND,
@@ -115,6 +131,13 @@ impl SubtitleEditorApp {
                         .speed(1),
                 );
 
+                ui.label("N:");
+                ui.add(
+                    egui::DragValue::new(&mut self.deepl_state.translation_batch_size)
+                        .range(1..=500)
+                        .speed(1),
+                );
+
                 let mut translation_mode = self.deepl_state.translation_mode;
                 if ui
                     .checkbox(&mut translation_mode, "Translation mode (diff)")
@@ -131,6 +154,15 @@ impl SubtitleEditorApp {
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Translate line").clicked() {
                     if let Err(e) = self.translate_focused_line() {
+                        self.error = Some(e);
+                    } else {
+                        self.error = None;
+                    }
+                }
+
+                if ui.button("Translate N lines").clicked() {
+                    let batch_size = self.deepl_state.translation_batch_size as usize;
+                    if let Err(e) = self.translate_n_lines_from_focus(batch_size) {
                         self.error = Some(e);
                     } else {
                         self.error = None;
@@ -160,7 +192,7 @@ impl SubtitleEditorApp {
 
             ui.label(
                 egui::RichText::new(
-                    "Ctrl+T: Translate line. Ctrl+A: alternatives. In the translation mode the right project is updated automatically.",
+                    "Ctrl+T: Translate line. Ctrl+Shift+T: translate N lines from focus. Ctrl+A: alternatives.",
                 )
                 .weak(),
             );
@@ -307,6 +339,95 @@ impl SubtitleEditorApp {
         Ok(())
     }
 
+    fn translate_n_lines_from_focus(&mut self, requested_count: usize) -> Result<(), String> {
+        let focus = self
+            .active_focus
+            .ok_or_else(|| "Choose a line to start batch translation".to_string())?;
+
+        let source_lang = self.normalized_source_lang();
+        let target_lang = self.normalized_target_lang()?;
+        let glossary_id = self.deepl_state.glossary_id.clone();
+        let client = self.deepl_client()?;
+        let count = requested_count.max(1);
+
+        if self.deepl_state.translation_mode {
+            let total = self.project.lines.len();
+            if focus.index >= total {
+                return Err("Focused line is out of range".to_string());
+            }
+
+            let start = focus.index;
+            let end = (start + count).min(total);
+
+            let translated = self.translate_line_range_with_context(
+                &self.project.lines,
+                start,
+                end,
+                &client,
+                source_lang.as_deref(),
+                &target_lang,
+                glossary_id.as_deref(),
+            )?;
+
+            self.ensure_translation_project_for_source();
+            let secondary = self
+                .secondary_project
+                .as_mut()
+                .ok_or_else(|| "Translation project is unavailable".to_string())?;
+
+            for (offset, translated_line) in translated.into_iter().enumerate() {
+                let target_index = start + offset;
+                let line = secondary
+                    .lines
+                    .get_mut(target_index)
+                    .ok_or_else(|| "Target line is not found".to_string())?;
+                line.text = translated_line;
+            }
+
+            return Ok(());
+        }
+
+        let pane = focus.pane;
+        let (start, end, translated) = {
+            let project = self
+                .project_for_pane(pane)
+                .ok_or_else(|| "The chosen pane is unaccesible".to_string())?;
+
+            if focus.index >= project.lines.len() {
+                return Err("Focused line is out of range".to_string());
+            }
+
+            let start = focus.index;
+            let end = (start + count).min(project.lines.len());
+            let translated = self.translate_line_range_with_context(
+                &project.lines,
+                start,
+                end,
+                &client,
+                source_lang.as_deref(),
+                &target_lang,
+                glossary_id.as_deref(),
+            )?;
+            (start, end, translated)
+        };
+
+        let project = self
+            .project_for_pane_mut(pane)
+            .ok_or_else(|| "The chosen pane is unaccesible".to_string())?;
+
+        if end > project.lines.len() {
+            return Err("Pane lines changed during translation".to_string());
+        }
+
+        for (index, translated_line) in (start..end).zip(translated.into_iter()) {
+            if let Some(line) = project.lines.get_mut(index) {
+                line.text = translated_line;
+            }
+        }
+
+        Ok(())
+    }
+
     fn translate_active_file(&mut self) -> Result<(), String> {
         let source_lang = self.normalized_source_lang();
         let target_lang = self.normalized_target_lang()?;
@@ -402,10 +523,36 @@ impl SubtitleEditorApp {
         target_lang: &str,
         glossary_id: Option<&str>,
     ) -> Result<Vec<String>, String> {
-        let mut translated = Vec::with_capacity(lines.len());
+        self.translate_line_range_with_context(
+            lines,
+            0,
+            lines.len(),
+            client,
+            source_lang,
+            target_lang,
+            glossary_id,
+        )
+    }
+
+    fn translate_line_range_with_context(
+        &self,
+        lines: &[SubtitleLine],
+        start: usize,
+        end: usize,
+        client: &deepl::DeepLClient,
+        source_lang: Option<&str>,
+        target_lang: &str,
+        glossary_id: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        if lines.is_empty() || start >= lines.len() || start >= end {
+            return Ok(Vec::new());
+        }
+
+        let effective_end = end.min(lines.len());
+        let mut translated = Vec::with_capacity(effective_end - start);
         let context_radius = self.deepl_state.translation_context_radius as usize;
 
-        for (index, line) in lines.iter().enumerate() {
+        for (index, line) in lines.iter().enumerate().skip(start).take(effective_end - start) {
             let context = build_translation_context_from_lines(lines, index, context_radius);
             let response = client.translate_texts_with_context(
                 &[line.text.clone()],

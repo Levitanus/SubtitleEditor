@@ -99,6 +99,7 @@ struct DeepLUiState {
     use_free_api: bool,
     translation_mode: bool,
     translation_context_radius: u8,
+    translation_batch_size: u16,
     source_lang: String,
     target_lang: String,
     glossary_name: String,
@@ -115,6 +116,7 @@ impl Default for DeepLUiState {
             use_free_api: true,
             translation_mode: false,
             translation_context_radius: 2,
+            translation_batch_size: 20,
             source_lang: String::new(),
             target_lang: "RU".to_string(),
             glossary_name: "Subtitle Glossary".to_string(),
@@ -135,6 +137,8 @@ struct PersistedSettings {
     deepl_translation_mode: bool,
     #[serde(default = "default_translation_context_radius")]
     deepl_translation_context_radius: u8,
+    #[serde(default = "default_translation_batch_size")]
+    deepl_translation_batch_size: u16,
     deepl_source_lang: String,
     deepl_target_lang: String,
     deepl_glossary_name: String,
@@ -145,6 +149,10 @@ struct PersistedSettings {
 
 fn default_translation_context_radius() -> u8 {
     2
+}
+
+fn default_translation_batch_size() -> u16 {
+    20
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -388,6 +396,7 @@ impl SubtitleEditorApp {
             deepl_use_free_api: self.deepl_state.use_free_api,
             deepl_translation_mode: self.deepl_state.translation_mode,
             deepl_translation_context_radius: self.deepl_state.translation_context_radius,
+            deepl_translation_batch_size: self.deepl_state.translation_batch_size,
             deepl_source_lang: self.deepl_state.source_lang.clone(),
             deepl_target_lang: self.deepl_state.target_lang.clone(),
             deepl_glossary_name: self.deepl_state.glossary_name.clone(),
@@ -404,6 +413,7 @@ impl SubtitleEditorApp {
         self.deepl_state.use_free_api = settings.deepl_use_free_api;
         self.deepl_state.translation_mode = settings.deepl_translation_mode;
         self.deepl_state.translation_context_radius = settings.deepl_translation_context_radius;
+        self.deepl_state.translation_batch_size = settings.deepl_translation_batch_size;
         self.deepl_state.source_lang = settings.deepl_source_lang;
         self.deepl_state.target_lang = settings.deepl_target_lang;
         self.deepl_state.glossary_name = settings.deepl_glossary_name;
