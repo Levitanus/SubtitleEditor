@@ -1,8 +1,13 @@
 use eframe::egui;
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
+mod deepl;
+mod deepl_gui;
 mod exporters;
 mod history_actions;
 mod importers;
@@ -13,11 +18,11 @@ fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .init();
-    let options = eframe::NativeOptions::default();
+    let (app, options) = SubtitleEditorApp::bootstrap();
     eframe::run_native(
         "Subtitle Editor",
         options,
-        Box::new(|_cc| Ok(Box::new(SubtitleEditorApp::default()))),
+        Box::new(move |_cc| Ok(Box::new(app))),
     )
     .unwrap();
 }
@@ -61,10 +66,85 @@ struct SubtitleEditorApp {
     project: ProjectState,
     secondary_project: Option<ProjectState>,
     diff_view_enabled: bool,
+    active_focus: Option<line_widget::LineWidgetFocus>,
     config: EditorConfig,
+    deepl_state: DeepLUiState,
+    last_saved_settings: Option<PersistedSettings>,
     error: Option<String>,
     undo_stack: Vec<EditorSnapshot>,
     redo_stack: Vec<EditorSnapshot>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct GlossaryEntry {
+    source: String,
+    target: String,
+}
+
+#[derive(Debug, Clone)]
+struct AlternativesState {
+    pane: line_widget::PaneSide,
+    line_index: usize,
+    start: usize,
+    end: usize,
+    selected_text: String,
+    query: String,
+    items: Vec<String>,
+    open: bool,
+}
+
+#[derive(Debug, Clone)]
+struct DeepLUiState {
+    api_key: String,
+    use_free_api: bool,
+    translation_mode: bool,
+    translation_context_radius: u8,
+    source_lang: String,
+    target_lang: String,
+    glossary_name: String,
+    glossary_id: Option<String>,
+    glossary_entries: Vec<GlossaryEntry>,
+    glossary_window_open: bool,
+    alternatives: Option<AlternativesState>,
+}
+
+impl Default for DeepLUiState {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            use_free_api: true,
+            translation_mode: false,
+            translation_context_radius: 2,
+            source_lang: String::new(),
+            target_lang: "RU".to_string(),
+            glossary_name: "Subtitle Glossary".to_string(),
+            glossary_id: None,
+            glossary_entries: Vec::new(),
+            glossary_window_open: false,
+            alternatives: None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct PersistedSettings {
+    window_pos: Option<(f32, f32)>,
+    window_size: Option<(f32, f32)>,
+    deepl_api_key: String,
+    deepl_use_free_api: bool,
+    deepl_translation_mode: bool,
+    #[serde(default = "default_translation_context_radius")]
+    deepl_translation_context_radius: u8,
+    deepl_source_lang: String,
+    deepl_target_lang: String,
+    deepl_glossary_name: String,
+    deepl_glossary_id: Option<String>,
+    deepl_glossary_entries: Vec<GlossaryEntry>,
+    diff_view_enabled: bool,
+}
+
+fn default_translation_context_radius() -> u8 {
+    2
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +160,10 @@ impl eframe::App for SubtitleEditorApp {
         let mut skip_history_capture = false;
 
         if self.handle_history_shortcuts(ctx) {
+            skip_history_capture = true;
+        }
+
+        if self.handle_deepl_shortcuts(ctx) {
             skip_history_capture = true;
         }
 
@@ -143,20 +227,33 @@ impl eframe::App for SubtitleEditorApp {
 
                 ui.separator();
 
-                ui.checkbox(&mut self.diff_view_enabled, "Diff view");
+                if self.deepl_state.translation_mode {
+                    self.diff_view_enabled = true;
+                    ui.add_enabled(false, egui::Checkbox::new(&mut self.diff_view_enabled, "Diff view"));
+                } else {
+                    ui.checkbox(&mut self.diff_view_enabled, "Diff view");
+                }
 
                 if self.diff_view_enabled {
-                    if ui.button("Загрузить второй файл...").clicked() {
-                        match self.load_secondary_file() {
-                            Ok(changed) => {
-                                if changed {
-                                    self.clear_history();
-                                    self.error = None;
-                                    skip_history_capture = true;
+                    if self.deepl_state.translation_mode {
+                        ui.label("Режим перевода: правый проект создаётся автоматически");
+                        if ui.button("Сбросить проект перевода").clicked() {
+                            self.reset_translation_project();
+                            skip_history_capture = true;
+                        }
+                    } else {
+                        if ui.button("Загрузить второй файл...").clicked() {
+                            match self.load_secondary_file() {
+                                Ok(changed) => {
+                                    if changed {
+                                        self.clear_history();
+                                        self.error = None;
+                                        skip_history_capture = true;
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                self.error = Some(e);
+                                Err(e) => {
+                                    self.error = Some(e);
+                                }
                             }
                         }
                     }
@@ -189,6 +286,9 @@ impl eframe::App for SubtitleEditorApp {
                 }
             });
 
+            ui.separator();
+            self.render_deepl_panel(ui);
+
             if let Some(path) = &self.project.file_path {
                 ui.label(format!("Левый файл: {}", path));
             }
@@ -211,13 +311,24 @@ impl eframe::App for SubtitleEditorApp {
                 if let Some(secondary_project) = self.secondary_project.as_mut() {
                     render_diff_editor(ui, &mut self.project, secondary_project, &mut focused_line);
                 } else {
-                    ui.label("Diff view включен. Загрузите второй файл.");
+                    if self.deepl_state.translation_mode {
+                        ui.label("Diff view включен. Нажмите «Сбросить проект перевода» или «Перевести файл».");
+                    } else {
+                        ui.label("Diff view включен. Загрузите второй файл.");
+                    }
                 }
             } else {
                 ui.label("Список строк:");
                 render_single_editor(ui, &mut self.project, &mut focused_line);
             }
         });
+
+        if let Some(focused_line) = focused_line {
+            self.active_focus = Some(focused_line);
+        }
+
+        self.render_glossary_window(ctx);
+        self.render_alternatives_window(ctx);
 
         if self.handle_shortcuts(ctx, focused_line) {
             skip_history_capture = true;
@@ -226,16 +337,95 @@ impl eframe::App for SubtitleEditorApp {
         if !skip_history_capture {
             self.capture_history_if_project_changed(state_before);
         }
+
+        self.maybe_auto_save_settings();
     }
 }
 
 impl SubtitleEditorApp {
+    fn bootstrap() -> (Self, eframe::NativeOptions) {
+        let mut app = Self::default();
+
+        if let Some(settings) = load_persisted_settings() {
+            app.apply_persisted_settings(settings);
+        }
+
+        app.last_saved_settings = Some(app.to_persisted_settings());
+
+        let mut options = eframe::NativeOptions::default();
+        if let Some((width, height)) = app.config.window_size {
+            options.viewport = options.viewport.with_inner_size([width, height]);
+        }
+        if let Some((x, y)) = app.config.window_pos {
+            options.viewport = options.viewport.with_position([x, y]);
+        }
+
+        (app, options)
+    }
+
     fn current_snapshot(&self) -> EditorSnapshot {
         EditorSnapshot {
             project: self.project.clone(),
             secondary_project: self.secondary_project.clone(),
             diff_view_enabled: self.diff_view_enabled,
         }
+    }
+
+    fn to_persisted_settings(&self) -> PersistedSettings {
+        PersistedSettings {
+            window_pos: self
+                .config
+                .window_pos
+                .map(|(x, y)| (round_window_value(x), round_window_value(y))),
+            window_size: self
+                .config
+                .window_size
+                .map(|(w, h)| (round_window_value(w), round_window_value(h))),
+            deepl_api_key: self.deepl_state.api_key.clone(),
+            deepl_use_free_api: self.deepl_state.use_free_api,
+            deepl_translation_mode: self.deepl_state.translation_mode,
+            deepl_translation_context_radius: self.deepl_state.translation_context_radius,
+            deepl_source_lang: self.deepl_state.source_lang.clone(),
+            deepl_target_lang: self.deepl_state.target_lang.clone(),
+            deepl_glossary_name: self.deepl_state.glossary_name.clone(),
+            deepl_glossary_id: self.deepl_state.glossary_id.clone(),
+            deepl_glossary_entries: self.deepl_state.glossary_entries.clone(),
+            diff_view_enabled: self.diff_view_enabled,
+        }
+    }
+
+    fn apply_persisted_settings(&mut self, settings: PersistedSettings) {
+        self.config.window_pos = settings.window_pos;
+        self.config.window_size = settings.window_size;
+        self.deepl_state.api_key = settings.deepl_api_key;
+        self.deepl_state.use_free_api = settings.deepl_use_free_api;
+        self.deepl_state.translation_mode = settings.deepl_translation_mode;
+        self.deepl_state.translation_context_radius = settings.deepl_translation_context_radius;
+        self.deepl_state.source_lang = settings.deepl_source_lang;
+        self.deepl_state.target_lang = settings.deepl_target_lang;
+        self.deepl_state.glossary_name = settings.deepl_glossary_name;
+        self.deepl_state.glossary_id = settings.deepl_glossary_id;
+        self.deepl_state.glossary_entries = settings.deepl_glossary_entries;
+        self.diff_view_enabled = settings.diff_view_enabled;
+
+        if self.deepl_state.translation_mode {
+            self.diff_view_enabled = true;
+            self.reset_translation_project();
+        }
+    }
+
+    fn maybe_auto_save_settings(&mut self) {
+        let settings = self.to_persisted_settings();
+        if self.last_saved_settings.as_ref() == Some(&settings) {
+            return;
+        }
+
+        if let Err(error) = save_persisted_settings(&settings) {
+            log::warn!("Failed to save settings: {}", error);
+            return;
+        }
+
+        self.last_saved_settings = Some(settings);
     }
 
     fn load_primary_file(&mut self) -> Result<bool, String> {
@@ -248,6 +438,11 @@ impl SubtitleEditorApp {
 
         let project = importers::import_file(&path.to_string_lossy())?;
         self.project = project;
+
+        if self.deepl_state.translation_mode {
+            self.reset_translation_project();
+        }
+
         Ok(true)
     }
 
@@ -275,6 +470,62 @@ impl SubtitleEditorApp {
             copy_timecodes_by_index(secondary, &mut self.project);
         }
     }
+}
+
+fn settings_file_path() -> PathBuf {
+    if let Ok(xdg_config_home) = env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(xdg_config_home)
+            .join("subtitle_editor")
+            .join("settings.json");
+    }
+
+    if let Ok(home) = env::var("HOME") {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("subtitle_editor")
+            .join("settings.json");
+    }
+
+    PathBuf::from("subtitle_editor.settings.json")
+}
+
+fn load_persisted_settings() -> Option<PersistedSettings> {
+    let path = settings_file_path();
+    if !path.exists() {
+        return None;
+    }
+
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            log::warn!("Failed to read settings from {:?}: {}", path, error);
+            return None;
+        }
+    };
+
+    match serde_json::from_str::<PersistedSettings>(&contents) {
+        Ok(settings) => Some(settings),
+        Err(error) => {
+            log::warn!("Failed to parse settings from {:?}: {}", path, error);
+            None
+        }
+    }
+}
+
+fn save_persisted_settings(settings: &PersistedSettings) -> Result<(), String> {
+    let path = settings_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Не удалось создать папку настроек: {}", error))?;
+    }
+
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|error| format!("Не удалось сериализовать настройки: {}", error))?;
+    fs::write(&path, json).map_err(|error| format!("Не удалось записать настройки: {}", error))
+}
+
+fn round_window_value(value: f32) -> f32 {
+    (value * 10.0).round() / 10.0
 }
 
 fn copy_timecodes_by_index(source: &ProjectState, target: &mut ProjectState) {

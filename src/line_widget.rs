@@ -31,6 +31,7 @@ pub struct LineWidgetFocus {
     pub pane: PaneSide,
     pub index: usize,
     pub char_index: usize,
+    pub selection_range: Option<(usize, usize)>,
 }
 
 pub fn line_action_from_shortcuts(
@@ -171,14 +172,24 @@ pub fn render_line_widget(
                     .show(ui);
 
                 if output.response.has_focus() {
-                    let char_index = output
+                    let (char_index, selection_range) = output
                         .cursor_range
-                        .map(|range| range.primary.index)
-                        .unwrap_or_else(|| line.text.chars().count());
+                        .map(|range| {
+                            let primary = range.primary.index;
+                            let secondary = range.secondary.index;
+                            let selection = if primary == secondary {
+                                None
+                            } else {
+                                Some((primary.min(secondary), primary.max(secondary)))
+                            };
+                            (primary, selection)
+                        })
+                        .unwrap_or_else(|| (line.text.chars().count(), None));
                     focus = Some(LineWidgetFocus {
                         pane,
                         index,
                         char_index,
+                        selection_range,
                     });
                 }
             });
