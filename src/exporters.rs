@@ -13,7 +13,7 @@ pub fn export_file(project: &ProjectState, path: &str) -> Result<(), String> {
     } else if path.ends_with(".seproj") {
         export_seproj(project, path)
     } else {
-        Err("Неизвестный формат для сохранения".to_string())
+        Err("Unknown format to save as".to_string())
     }
 }
 
@@ -24,7 +24,7 @@ pub fn export_sbv(project: &ProjectState, path: &str) -> Result<(), String> {
         let timecode = line
             .timecode
             .as_ref()
-            .ok_or_else(|| format!("У строки {} отсутствует тайм-код", idx + 1))?;
+            .ok_or_else(|| format!("Line {} timecode is missing", idx + 1))?;
 
         writeln!(
             file,
@@ -138,7 +138,7 @@ fn export_project_with_dialog(project: &ProjectState) -> Result<(), String> {
     let normalized_path = if has_extension(&raw_path, "txt") || has_extension(&raw_path, "sbv") {
         raw_path
     } else if has_any_extension(&raw_path) {
-        return Err("Экспорт поддерживает только форматы .txt и .sbv".to_string());
+        return Err("Export supprots only .txt и .sbv".to_string());
     } else {
         ensure_extension(raw_path, default_ext)
     };

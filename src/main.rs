@@ -178,7 +178,7 @@ impl eframe::App for SubtitleEditorApp {
             ui.separator();
 
             ui.horizontal(|ui| {
-                if ui.button("Загрузить файл...").clicked() {
+                if ui.button("Load file...").clicked() {
                     match self.load_primary_file() {
                         Ok(changed) => {
                             if changed {
@@ -193,7 +193,7 @@ impl eframe::App for SubtitleEditorApp {
                     }
                 }
 
-                if ui.button("Сохранить").clicked() {
+                if ui.button("Save").clicked() {
                     if let Err(e) = self.save_current_file() {
                         self.error = Some(e);
                     } else {
@@ -201,7 +201,7 @@ impl eframe::App for SubtitleEditorApp {
                     }
                 }
 
-                if ui.button("Экспорт").clicked() {
+                if ui.button("Export").clicked() {
                     if let Err(e) = self.export_current_file() {
                         self.error = Some(e);
                     } else {
@@ -229,20 +229,23 @@ impl eframe::App for SubtitleEditorApp {
 
                 if self.deepl_state.translation_mode {
                     self.diff_view_enabled = true;
-                    ui.add_enabled(false, egui::Checkbox::new(&mut self.diff_view_enabled, "Diff view"));
+                    ui.add_enabled(
+                        false,
+                        egui::Checkbox::new(&mut self.diff_view_enabled, "Diff view"),
+                    );
                 } else {
                     ui.checkbox(&mut self.diff_view_enabled, "Diff view");
                 }
 
                 if self.diff_view_enabled {
                     if self.deepl_state.translation_mode {
-                        ui.label("Режим перевода: правый проект создаётся автоматически");
-                        if ui.button("Сбросить проект перевода").clicked() {
+                        ui.label("Translation mode: Right side would be affected by translator");
+                        if ui.button("Reset translation project").clicked() {
                             self.reset_translation_project();
                             skip_history_capture = true;
                         }
                     } else {
-                        if ui.button("Загрузить второй файл...").clicked() {
+                        if ui.button("Load the second file...").clicked() {
                             match self.load_secondary_file() {
                                 Ok(changed) => {
                                     if changed {
@@ -259,7 +262,7 @@ impl eframe::App for SubtitleEditorApp {
                     }
 
                     if self.secondary_project.is_some() {
-                        if ui.button("Сохранить второй").clicked() {
+                        if ui.button("Save right").clicked() {
                             if let Err(e) = self.save_secondary_file() {
                                 self.error = Some(e);
                             } else {
@@ -267,7 +270,7 @@ impl eframe::App for SubtitleEditorApp {
                             }
                         }
 
-                        if ui.button("Экспорт второй").clicked() {
+                        if ui.button("Export right").clicked() {
                             if let Err(e) = self.export_secondary_file() {
                                 self.error = Some(e);
                             } else {
@@ -275,11 +278,11 @@ impl eframe::App for SubtitleEditorApp {
                             }
                         }
 
-                        if ui.button("Тайм-коды L→R").clicked() {
+                        if ui.button("Timcodes L->R").clicked() {
                             self.apply_timecodes_primary_to_secondary();
                         }
 
-                        if ui.button("Тайм-коды R→L").clicked() {
+                        if ui.button("Timecodes L<-R").clicked() {
                             self.apply_timecodes_secondary_to_primary();
                         }
                     }
@@ -290,13 +293,13 @@ impl eframe::App for SubtitleEditorApp {
             self.render_deepl_panel(ui);
 
             if let Some(path) = &self.project.file_path {
-                ui.label(format!("Левый файл: {}", path));
+                ui.label(format!("Left file: {}", path));
             }
 
             if self.diff_view_enabled {
                 if let Some(secondary) = &self.secondary_project {
                     if let Some(path) = &secondary.file_path {
-                        ui.label(format!("Правый файл: {}", path));
+                        ui.label(format!("Right file: {}", path));
                     }
                 }
             }
@@ -312,13 +315,13 @@ impl eframe::App for SubtitleEditorApp {
                     render_diff_editor(ui, &mut self.project, secondary_project, &mut focused_line);
                 } else {
                     if self.deepl_state.translation_mode {
-                        ui.label("Diff view включен. Нажмите «Сбросить проект перевода» или «Перевести файл».");
+                        ui.label("Diff view is on. Press «reset translation» or «translate file».");
                     } else {
-                        ui.label("Diff view включен. Загрузите второй файл.");
+                        ui.label("Diff view is on. Load the right file.");
                     }
                 }
             } else {
-                ui.label("Список строк:");
+                ui.label("Lines list:");
                 render_single_editor(ui, &mut self.project, &mut focused_line);
             }
         });
@@ -516,12 +519,12 @@ fn save_persisted_settings(settings: &PersistedSettings) -> Result<(), String> {
     let path = settings_file_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|error| format!("Не удалось создать папку настроек: {}", error))?;
+            .map_err(|error| format!("Cannot make settings folder: {}", error))?;
     }
 
     let json = serde_json::to_string_pretty(settings)
-        .map_err(|error| format!("Не удалось сериализовать настройки: {}", error))?;
-    fs::write(&path, json).map_err(|error| format!("Не удалось записать настройки: {}", error))
+        .map_err(|error| format!("Cannot serialize settings: {}", error))?;
+    fs::write(&path, json).map_err(|error| format!("Cannot write settings: {}", error))
 }
 
 fn round_window_value(value: f32) -> f32 {

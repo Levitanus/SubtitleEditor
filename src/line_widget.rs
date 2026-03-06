@@ -161,7 +161,7 @@ pub fn render_line_widget(
                 } else if reserve_timecode_slot {
                     ui.add_sized(
                         [ui.available_width(), TIMECODE_ROW_RESERVED_HEIGHT],
-                        egui::Label::new(egui::RichText::new("без тайм-кода").weak()),
+                        egui::Label::new(egui::RichText::new("no timecode").weak()),
                     );
                     ui.add_space(TIMECODE_BOTTOM_GAP);
                 }

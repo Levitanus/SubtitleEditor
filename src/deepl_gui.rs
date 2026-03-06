@@ -117,7 +117,7 @@ impl SubtitleEditorApp {
 
                 let mut translation_mode = self.deepl_state.translation_mode;
                 if ui
-                    .checkbox(&mut translation_mode, "Режим перевода (diff)")
+                    .checkbox(&mut translation_mode, "Translation mode (diff)")
                     .changed()
                 {
                     if translation_mode {
@@ -129,7 +129,7 @@ impl SubtitleEditorApp {
             });
 
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Перевести строку").clicked() {
+                if ui.button("Translate line").clicked() {
                     if let Err(e) = self.translate_focused_line() {
                         self.error = Some(e);
                     } else {
@@ -137,7 +137,7 @@ impl SubtitleEditorApp {
                     }
                 }
 
-                if ui.button("Перевести файл").clicked() {
+                if ui.button("Translate file").clicked() {
                     if let Err(e) = self.translate_active_file() {
                         self.error = Some(e);
                     } else {
@@ -145,7 +145,7 @@ impl SubtitleEditorApp {
                     }
                 }
 
-                if ui.button("Альтернативы слова").clicked() {
+                if ui.button("Alternatives").clicked() {
                     if let Err(e) = self.find_alternatives_for_focus() {
                         self.error = Some(e);
                     } else {
@@ -153,14 +153,14 @@ impl SubtitleEditorApp {
                     }
                 }
 
-                if ui.button("Глоссарий").clicked() {
+                if ui.button("Glossary").clicked() {
                     self.deepl_state.glossary_window_open = true;
                 }
             });
 
             ui.label(
                 egui::RichText::new(
-                    "Ctrl+T: перевести строку. Ctrl+A: альтернативы слова. В режиме перевода правый проект создаётся автоматически.",
+                    "Ctrl+T: Translate line. Ctrl+A: alternatives. In the translation mode the right project is updated automatically.",
                 )
                 .weak(),
             );
@@ -170,7 +170,7 @@ impl SubtitleEditorApp {
     fn deepl_client(&self) -> Result<deepl::DeepLClient, String> {
         let api_key = self.deepl_state.api_key.trim();
         if api_key.is_empty() {
-            return Err("Укажите DeepL API key".to_string());
+            return Err("Set DeepL API key".to_string());
         }
 
         Ok(deepl::DeepLClient::new(
@@ -182,7 +182,7 @@ impl SubtitleEditorApp {
     fn normalized_target_lang(&self) -> Result<String, String> {
         let target = self.deepl_state.target_lang.trim().to_uppercase();
         if target.is_empty() {
-            return Err("Укажите target language (например, RU, EN, DE)".to_string());
+            return Err("Set target language (for example, RU, EN, DE)".to_string());
         }
         Ok(target)
     }
@@ -217,18 +217,18 @@ impl SubtitleEditorApp {
     ) -> Result<String, String> {
         let project = self
             .project_for_pane(pane)
-            .ok_or_else(|| "Выбранная панель недоступна".to_string())?;
+            .ok_or_else(|| "The chosen pane is unaccesible".to_string())?;
         let line = project
             .lines
             .get(index)
-            .ok_or_else(|| "Строка не найдена".to_string())?;
+            .ok_or_else(|| "Line is not found".to_string())?;
         Ok(line.text.clone())
     }
 
     fn translate_focused_line(&mut self) -> Result<(), String> {
         let focus = self
             .active_focus
-            .ok_or_else(|| "Выберите строку для перевода".to_string())?;
+            .ok_or_else(|| "Choose the line for translation".to_string())?;
 
         let source_lang = self.normalized_source_lang();
         let target_lang = self.normalized_target_lang()?;
@@ -240,7 +240,7 @@ impl SubtitleEditorApp {
                 .project
                 .lines
                 .get(focus.index)
-                .ok_or_else(|| "Строка источника не найдена".to_string())?;
+                .ok_or_else(|| "The source line is not found".to_string())?;
             let context = build_translation_context_from_lines(
                 &self.project.lines,
                 focus.index,

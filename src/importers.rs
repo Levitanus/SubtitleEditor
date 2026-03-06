@@ -28,7 +28,7 @@ pub fn import_file(path: &str) -> Result<ProjectState, String> {
         }
         Ok(project)
     } else {
-        Err("Неизвестный формат файла".to_string())
+        Err("Unknown file format".to_string())
     }
 }
 
@@ -84,7 +84,7 @@ fn import_sbv(path: &str) -> Result<Vec<SubtitleLine>, String> {
         }
 
         let timecode = parse_sbv_time_range(line)
-            .ok_or_else(|| format!("Некорректная строка тайм-кода SBV: {}", line))?;
+            .ok_or_else(|| format!("Incorrect timecode line in SBV: {}", line))?;
         idx += 1;
 
         let mut text_parts = Vec::new();
