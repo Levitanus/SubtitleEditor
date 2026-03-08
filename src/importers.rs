@@ -1,4 +1,4 @@
-use crate::timecode::parse_sbv_time_range;
+use crate::timecode::{parse_sbv_time_range, parse_srt_time_range};
 use crate::{ProjectState, SubtitleFileType, SubtitleLine};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -16,6 +16,13 @@ pub fn import_file(path: &str) -> Result<ProjectState, String> {
         Ok(ProjectState {
             lines,
             file_type: Some(SubtitleFileType::Sbv),
+            file_path: Some(path.to_string()),
+        })
+    } else if path.ends_with(".srt") {
+        let lines = import_srt(path)?;
+        Ok(ProjectState {
+            lines,
+            file_type: Some(SubtitleFileType::Srt),
             file_path: Some(path.to_string()),
         })
     } else if path.ends_with(".seproj") {
@@ -85,6 +92,64 @@ fn import_sbv(path: &str) -> Result<Vec<SubtitleLine>, String> {
 
         let timecode = parse_sbv_time_range(line)
             .ok_or_else(|| format!("Incorrect timecode line in SBV: {}", line))?;
+        idx += 1;
+
+        let mut text_parts = Vec::new();
+        while idx < raw_lines.len() {
+            let text_line = raw_lines[idx].trim();
+            if text_line.is_empty() {
+                break;
+            }
+            text_parts.push(text_line.to_string());
+            idx += 1;
+        }
+
+        lines.push(SubtitleLine {
+            text: text_parts.join("\n"),
+            timecode: Some(timecode),
+        });
+
+        while idx < raw_lines.len() && raw_lines[idx].trim().is_empty() {
+            idx += 1;
+        }
+    }
+
+    Ok(lines)
+}
+
+fn import_srt(path: &str) -> Result<Vec<SubtitleLine>, String> {
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let reader = BufReader::new(file);
+    let raw_lines: Vec<String> = reader
+        .lines()
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut lines = Vec::new();
+    let mut idx = 0;
+
+    while idx < raw_lines.len() {
+        while idx < raw_lines.len() && raw_lines[idx].trim().is_empty() {
+            idx += 1;
+        }
+
+        if idx >= raw_lines.len() {
+            break;
+        }
+
+        let first_line = raw_lines[idx].trim().trim_start_matches('\u{feff}');
+        let timecode_line = if first_line.chars().all(|ch| ch.is_ascii_digit()) {
+            idx += 1;
+            if idx >= raw_lines.len() {
+                return Err("Unexpected end of file after SRT index line".to_string());
+            }
+            raw_lines[idx].trim().trim_start_matches('\u{feff}')
+        } else {
+            first_line
+        };
+
+        let timecode = parse_srt_time_range(timecode_line)
+            .ok_or_else(|| format!("Incorrect timecode line in SRT: {}", timecode_line))?;
         idx += 1;
 
         let mut text_parts = Vec::new();

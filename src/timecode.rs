@@ -32,6 +32,29 @@ pub fn parse_sbv_timecode(raw: &str) -> Option<Duration> {
     Some(Duration::from_millis(total_millis))
 }
 
+pub fn parse_srt_timecode(raw: &str) -> Option<Duration> {
+    let (h, rest) = raw.split_once(':')?;
+    let (m, rest) = rest.split_once(':')?;
+    let (s, ms) = rest.split_once(',')?;
+
+    let hours: u64 = h.parse().ok()?;
+    let minutes: u64 = m.parse().ok()?;
+    let seconds: u64 = s.parse().ok()?;
+    let millis: u64 = ms.parse().ok()?;
+
+    if minutes > 59 || seconds > 59 || millis > 999 {
+        return None;
+    }
+
+    let total_millis = hours
+        .saturating_mul(3_600_000)
+        .saturating_add(minutes.saturating_mul(60_000))
+        .saturating_add(seconds.saturating_mul(1_000))
+        .saturating_add(millis);
+
+    Some(Duration::from_millis(total_millis))
+}
+
 pub fn format_sbv_timecode(duration: Duration) -> String {
     let total_millis = duration.as_millis() as u64;
     let hours = total_millis / 3_600_000;
@@ -44,10 +67,29 @@ pub fn format_sbv_timecode(duration: Duration) -> String {
     format!("{}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
 
+pub fn format_srt_timecode(duration: Duration) -> String {
+    let total_millis = duration.as_millis() as u64;
+    let hours = total_millis / 3_600_000;
+    let rem_after_hours = total_millis % 3_600_000;
+    let minutes = rem_after_hours / 60_000;
+    let rem_after_minutes = rem_after_hours % 60_000;
+    let seconds = rem_after_minutes / 1_000;
+    let millis = rem_after_minutes % 1_000;
+
+    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, seconds, millis)
+}
+
 pub fn parse_sbv_time_range(line: &str) -> Option<TimecodeRange> {
     let (start_raw, end_raw) = line.split_once(',')?;
     let start = parse_sbv_timecode(start_raw.trim())?;
     let end = parse_sbv_timecode(end_raw.trim())?;
+    Some(TimecodeRange { start, end })
+}
+
+pub fn parse_srt_time_range(line: &str) -> Option<TimecodeRange> {
+    let (start_raw, end_raw) = line.split_once("-->")?;
+    let start = parse_srt_timecode(start_raw.trim())?;
+    let end = parse_srt_timecode(end_raw.trim())?;
     Some(TimecodeRange { start, end })
 }
 

@@ -31,6 +31,7 @@ fn main() {
 pub enum SubtitleFileType {
     Txt,
     Sbv,
+    Srt,
     Seproj,
 }
 
@@ -443,7 +444,7 @@ impl SubtitleEditorApp {
 
     fn load_primary_file(&mut self) -> Result<bool, String> {
         let Some(path) = FileDialog::new()
-            .add_filter("Subtitles", &["txt", "sbv", "seproj"] as &[&str])
+            .add_filter("Subtitles", &["txt", "sbv", "srt", "seproj"] as &[&str])
             .pick_file()
         else {
             return Ok(false);
@@ -461,7 +462,7 @@ impl SubtitleEditorApp {
 
     fn load_secondary_file(&mut self) -> Result<bool, String> {
         let Some(path) = FileDialog::new()
-            .add_filter("Subtitles", &["txt", "sbv", "seproj"] as &[&str])
+            .add_filter("Subtitles", &["txt", "sbv", "srt", "seproj"] as &[&str])
             .pick_file()
         else {
             return Ok(false);
